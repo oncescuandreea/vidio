@@ -219,7 +219,7 @@ class Profiler:
 def main():
     args = argparse.ArgumentParser()
     args.add_argument("--imsz", type=int, default=224)
-    args.add_argument("--num_workers", type=int, default=2)
+    args.add_argument("--num_workers", type=int, default=8)
     args.add_argument("--batch_size", type=int, default=4)
     args.add_argument("--frame_rate", type=int, default=24)
     args.add_argument("--shuffle", type=int, default=1)
