@@ -206,8 +206,8 @@ class Profiler:
                 if len(rolling_avg_clip_hz) == 3:
                     rolling_avg_clip_hz.pop(0)
                 rolling_avg_clip_hz.append(avg_clip_hz)
-                msg += f"batch hz (avg) {avg_hz:.2f}, "
-                msg += f"clip_hz: (avg) {avg_clip_hz:.2f} "
+                msg += f"batch_hz: (avg) {avg_hz:.2f}, "
+                msg += f"clip_hz: (avg) {avg_clip_hz:.2f}, "
                 msg += f"(std) {np.std(rolling_avg_clip_hz):.2f}"
             self.logger.info(msg)
             tic = time.time()
