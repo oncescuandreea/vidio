@@ -23,10 +23,14 @@ from nvidia.dali.plugin.pytorch import DALIGenericIterator
 from PIL import Image
 import itertools
 import matplotlib
+import glob
+import shutil
 matplotlib.use("Agg")
 
 from matplotlib import pyplot as plt
 import matplotlib.gridspec as gridspec
+from gpuinfo import GPUInfo
+import subprocess
 
 import numpy as np
 import nvidia.dali.ops as ops
@@ -206,14 +210,34 @@ class Profiler:
                 if len(rolling_avg_clip_hz) == 3:
                     rolling_avg_clip_hz.pop(0)
                 rolling_avg_clip_hz.append(avg_clip_hz)
-                msg += f"batch_hz: (avg) {avg_hz:.2f}, "
-                msg += f"clip_hz: (avg) {avg_clip_hz:.2f}, "
+                msg += f"batch hz: (avg) {avg_hz:.2f}, "
+                msg += f"clip hz: (avg) {avg_clip_hz:.2f}, "
                 msg += f"(std) {np.std(rolling_avg_clip_hz):.2f}"
             self.logger.info(msg)
             tic = time.time()
             if self.include_model:
                 with torch.no_grad():
                     self.model(clips)
+
+def get_GPU_info():
+    bashCommand = "nvidia-smi -f info.txt"
+    subprocess.call(bashCommand.split())
+
+def get_video_info(args):
+    with open(args.video_list, "r") as f:
+        rows = f.read().splitlines()
+        video_paths = [x.split()[0] for x in rows]
+
+    current_path = os.getcwd()
+    os.chdir("data/logs")
+    list_logs = glob.glob(os.getcwd()+'/ffprobe*.log')
+    for path in list_logs:
+        os.remove(path)
+    os.chdir(current_path)
+    bashCommand = f"ffprobe {video_paths[0]} -report"
+    subprocess.call(bashCommand.split())
+    list_logs = glob.glob(current_path+'/ffprobe*.log')
+    shutil.move(list_logs[0], "data/logs/"+list_logs[0].split("/")[-1])
 
 
 def main():
@@ -224,7 +248,7 @@ def main():
     args.add_argument("--frame_rate", type=int, default=24)
     args.add_argument("--shuffle", type=int, default=1)
     args.add_argument("--max_clips", type=int, default=25)
-    args.add_argument("--loader_types", default="dali")
+    args.add_argument("--loader_types", nargs='*', default="dali")
     args.add_argument("--stride", type=int, default=1)
     args.add_argument("--refresh", action="store_true")
     args.add_argument("--show_gpu_utilization", action="store_true")
@@ -249,8 +273,14 @@ def main():
     logger = logging.getLogger("profiler")
     logger.addHandler(console)
     logger.info(f"Profiling {args.loader_types}")
+    logger.info(f"Number of CPU workers - {args.num_workers}")
+    logger.info(f"Frame rate - {args.frame_rate} fps")
+    
+    get_GPU_info()
+    
+    get_video_info(args)
 
-    for loader_type in args.loader_types.split(","):
+    for loader_type in args.loader_types:
         if loader_type == "frames":
             dataset = FrameDataset(
                 stride=args.stride,
