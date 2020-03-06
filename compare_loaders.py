@@ -7,36 +7,35 @@
 %run -i compare_loaders.py --loader_type dali --disp_fig
 """
 
+import argparse
+import glob
+import hashlib
+import logging
 import os
 import pickle
-import time
-import tqdm
-import argparse
-import torch
-import logging
-from datetime import datetime
-import hashlib
-from pathlib import Path
-from torch.utils.data import DataLoader
-from torchvision.datasets.video_utils import VideoClips
-from nvidia.dali.plugin.pytorch import DALIGenericIterator
-from PIL import Image
-import itertools
-import matplotlib
-import glob
 import shutil
-matplotlib.use("Agg")
-
-from matplotlib import pyplot as plt
-import matplotlib.gridspec as gridspec
-from gpuinfo import GPUInfo
 import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
 
+import matplotlib
+import matplotlib.gridspec as gridspec
 import numpy as np
 import nvidia.dali.ops as ops
 import nvidia.dali.types as types
+import torch
+from matplotlib import pyplot as plt
 from nvidia.dali.pipeline import Pipeline
+from nvidia.dali.plugin.pytorch import DALIGenericIterator
+from PIL import Image
+from torch.utils.data import DataLoader
+from torchvision.datasets.video_utils import VideoClips
 from torchvision.models.video import r2plus1d_18
+
+matplotlib.use("Agg")
+
+
 
 
 try:
@@ -275,11 +274,8 @@ def main():
     logger.info(f"Profiling {args.loader_types}")
     logger.info(f"Number of CPU workers - {args.num_workers}")
     logger.info(f"Frame rate - {args.frame_rate} fps")
-    
     get_GPU_info()
-    
     get_video_info(args)
-
     for loader_type in args.loader_types:
         if loader_type == "frames":
             dataset = FrameDataset(
