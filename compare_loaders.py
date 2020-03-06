@@ -218,8 +218,8 @@ class Profiler:
                 with torch.no_grad():
                     self.model(clips)
 
-def get_GPU_info():
-    bashCommand = "nvidia-smi -f info.txt"
+def get_GPU_info(args):
+    bashCommand = f"nvidia-smi -f {str(args.log_dir)}/info.txt"
     subprocess.call(bashCommand.split())
 
 def get_video_info(args):
@@ -228,7 +228,8 @@ def get_video_info(args):
         video_paths = [x.split()[0] for x in rows]
 
     current_path = os.getcwd()
-    os.chdir("data/logs")
+    log_path = Path(args.log_dir)
+    os.chdir(log_path)
     list_logs = glob.glob(os.getcwd()+'/ffprobe*.log')
     for path in list_logs:
         os.remove(path)
@@ -236,7 +237,7 @@ def get_video_info(args):
     bashCommand = f"ffprobe {video_paths[0]} -report"
     subprocess.call(bashCommand.split())
     list_logs = glob.glob(current_path+'/ffprobe*.log')
-    shutil.move(list_logs[0], "data/logs/"+list_logs[0].split("/")[-1])
+    shutil.move(list_logs[0], str(log_path)+"/"+list_logs[0].split("/")[-1])
 
 
 def main():
@@ -274,7 +275,7 @@ def main():
     logger.info(f"Profiling {args.loader_types}")
     logger.info(f"Number of CPU workers - {args.num_workers}")
     logger.info(f"Frame rate - {args.frame_rate} fps")
-    get_GPU_info()
+    get_GPU_info(args)
     get_video_info(args)
     for loader_type in args.loader_types:
         if loader_type == "frames":

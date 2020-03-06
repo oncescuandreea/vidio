@@ -90,10 +90,10 @@ def main():
     current_path = Path(args.log_dir)
     results_path = current_path.parent.parent / "README.md"
     readme_dest = current_path.parent.parent / "READMEnew.md"
-    list_of_files = glob.glob(str(current_path / "*.txt"))
+    list_of_files = glob.glob(str(current_path / "*_*.txt"))
     latest_file = max(list_of_files, key=os.path.getctime)
     loader_types, loaders_hz, no_workers, frame_rate = log_parser(latest_file)
-    gpu_used = get_gpu(current_path.parent.parent / "info.txt")
+    gpu_used = get_gpu(current_path / "info.txt")
     video_info_path = glob.glob(str(current_path  / "ffprobe*.log"))[0]
     frame_dimension = get_dimensions(video_info_path)
 
