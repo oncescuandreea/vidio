@@ -6,9 +6,9 @@ This tool compares videoloaders for pytorch:
 ### Benchmark
 | Loader | Clips (Hz) |
 | ------ | ---------- |
-| Frames |7.1075|
-| Videoclip |3.9505|
-| Dali |13.5235|
+| Frames | 5          |
+| Videoclip |  5      |
+| Dali | 16 |
 ### Machine settings
 * GPU - Tesla P40
 * Number of CPU workers - 8
@@ -17,8 +17,8 @@ This tool compares videoloaders for pytorch:
 * Beegfs
 ### Data
 * Videos
-* Dimensions - 1024x436
-* Frame rate - 24  fps
+* Dimensions - 1024x436 
+* Frame rate - 24 fps
 
 ### Model
 * R(2+1)d with 18 layers - r2plus1d_18

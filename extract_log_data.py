@@ -88,8 +88,8 @@ def main():
     args = args.parse_args()
 
     current_path = Path(args.log_dir)
-    results_path = current_path.parent.parent / "README.md"
-    readme_dest = current_path.parent.parent / "READMEnew.md"
+    results_path = current_path.parent.parent / "misc/README_template.md"
+    readme_dest = current_path.parent.parent / "README.md"
     list_of_files = glob.glob(str(current_path / "*_*.txt"))
     latest_file = max(list_of_files, key=os.path.getctime)
     loader_types, loaders_hz, no_workers, frame_rate = log_parser(latest_file)
