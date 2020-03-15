@@ -1,48 +1,38 @@
 """A naive benchmark on the efficiency of different data loaders for video:
 
 * A simple image loader operating on JPEGs
-* VideoClips (https://github.com/pytorch/vision/blob/master/torchvision/datasets/video_utils.py)
 * DALI (https://docs.nvidia.com/deeplearning/sdk/dali-developer-guide/docs/index.html)
+* VideoClips
+    (https://github.com/pytorch/vision/blob/master/torchvision/datasets/video_utils.py)
 
-%run -i compare_loaders.py --loader_type dali --disp_fig
+ipy compare_loaders.py -- --loader_type dali --disp_fig
 """
 
 import argparse
-import glob
 import hashlib
 import logging
 import os
 import pickle
-import shutil
+import socket
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import List, Dict
+import ffmpeg
+from typing import Iterable
+from zsvision.zs_beartype import beartype
 
+from dali_video_loader import DaliVideoLoader
 import matplotlib
 import matplotlib.gridspec as gridspec
 import numpy as np
-import nvidia.dali.ops as ops
-import nvidia.dali.types as types
 import torch
 from matplotlib import pyplot as plt
-from nvidia.dali.pipeline import Pipeline
-from nvidia.dali.plugin.pytorch import DALIGenericIterator
 from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.datasets.video_utils import VideoClips
 from torchvision.models.video import r2plus1d_18
-
-matplotlib.use("Agg")
-
-
-
-
-try:
-    from zsvision.zs_iterm import zs_dispFig
-except ImportError:
-    msg = ("If you are using iterm2 and want to visualise the results in the terminal"
-           "then `pip instal zsvision`.  Otherwise, ignore this.")
 
 
 class FrameDataset:
@@ -116,30 +106,20 @@ class ClipDataset:
         return self.video_clips.num_clips()
 
 
-class DaliVideoPipeline(Pipeline):
-    def __init__(self, batch_size, num_threads, device_id, file_list, shuffle,
-                 initial_prefetch_size, clip_length_in_frames):
-        super().__init__(batch_size, num_threads, device_id, seed=0)
-        self.input = ops.VideoReader(
-            device="gpu",
-            shard_id=0,
-            num_shards=1,
-            file_list=file_list,
-            enable_frame_num=True,
-            enable_timestamps=False,
-            random_shuffle=shuffle,
-            initial_fill=initial_prefetch_size,
-            sequence_length=clip_length_in_frames,
-        )
-
-    def define_graph(self):
-        output = self.input(name="Reader")
-        return output
-
-
 class Profiler:
-    def __init__(self, loader_type, loader, vis, disp_fig, include_model, max_clips,
-                 imsz, logger, show_gpu_utilization):
+    @beartype
+    def __init__(
+            self,
+            vis: bool,
+            disp_fig: bool,
+            include_model: bool,
+            show_gpu_utilization: bool,
+            max_clips: int,
+            imsz: int,
+            loader_type: str,
+            loader: Iterable,
+            logger: logging.Logger,
+    ):
         self.vis = vis
         self.imsz = imsz
         self.loader = loader
@@ -155,7 +135,8 @@ class Profiler:
         self.logger = logger
         self.logger.info(f"{loader_type} profiler, include_model: {self.include_model}")
 
-    def vis_sequence(self, sequence):
+    @beartype
+    def vis_sequence(self, sequence: torch.Tensor):
         columns = 4
         rows = (sequence.shape[0] + 1) // (columns)
         figsize = (32, (16 // columns) * rows)
@@ -164,8 +145,12 @@ class Profiler:
         for j in range(rows * columns):
             plt.subplot(gs[j])
             plt.axis("off")
-            plt.imshow(sequence[j])
+            im = sequence[:, j].permute(1, 2, 0).cpu().numpy()
+            im = im - im.min()
+            im = im / im.max()
+            plt.imshow(im)
         if self.disp_fig:
+            from zsvision.zs_iterm import zs_dispFig
             zs_dispFig()
 
     def run(self):
@@ -218,121 +203,183 @@ class Profiler:
                 with torch.no_grad():
                     self.model(clips)
 
-def get_GPU_info(args):
-    bashCommand = f"nvidia-smi -f {str(args.log_dir)}/info.txt"
-    subprocess.call(bashCommand.split())
 
-def get_video_info(args):
-    with open(args.video_list, "r") as f:
+@beartype
+def get_gpu_info_path(log_dir: Path):
+    hostname = socket.gethostname()
+    return log_dir / f"gpu-info-for-{hostname}.txt"
+
+
+@beartype
+def get_GPU_info(log_dir: Path, refresh_meta: bool):
+    dest_path = get_gpu_info_path(log_dir=log_dir)
+    if dest_path.exists() and not refresh_meta:
+        return
+    cmd = f"nvidia-smi -f {dest_path}"
+    subprocess.call(cmd.split())
+
+
+@beartype
+def get_video_info(log_dir: Path, video_list: Path, refresh_meta: bool):
+    with open(video_list, "r") as f:
         rows = f.read().splitlines()
-        video_paths = [x.split()[0] for x in rows]
+    video_paths = [x.split()[0] for x in rows]
+    # create a hash from the video paths to ensure the cache is not stale
+    hashable_bytes = "".join(sorted(video_paths)).encode("utf-8")
+    hash_str = hashlib.sha256(hashable_bytes).hexdigest()[:8]
+    dest_path = log_dir / f"video-meta-{hash_str}.log"
+    if dest_path.exists() and not refresh_meta:
+        return
 
-    current_path = os.getcwd()
-    log_path = Path(args.log_dir)
-    os.chdir(log_path)
-    list_logs = glob.glob(os.getcwd()+'/ffprobe*.log')
-    for path in list_logs:
-        os.remove(path)
-    os.chdir(current_path)
-    bashCommand = f"ffprobe {video_paths[0]} -report"
-    subprocess.call(bashCommand.split())
-    list_logs = glob.glob(current_path+'/ffprobe*.log')
-    shutil.move(list_logs[0], str(log_path)+"/"+list_logs[0].split("/")[-1])
+    dims = {"height": [], "width": []}
+    for video_path in video_paths:
+        probe = ffmpeg.probe(video_path)
+        video_stream = next((stream for stream in probe['streams'] if
+                            stream['codec_type'] == 'video'), None)
+        for key in dims:
+            dims[key].append(video_stream[key])
+    for key, vals in dims.items():
+        assert len(set(vals)) == 1, f"Expected videos to have the same {key}"
+    height, width = dims["height"][0], dims["width"][0]
+
+    with open(dest_path, "w") as f:
+        f.write(f"height: {height}, width: {width}\n")
+
+
+def build_loaders(
+        cache_dir: Path,
+        frame_list: Path,
+        video_list: Path,
+        shuffle: bool,
+        refresh: bool,
+        stride: int,
+        seed: int,
+        batch_size: int,
+        num_workers: int,
+        frame_rate: int,
+        clip_length_in_frames: int,
+        loader_types: List[str],
+) -> Dict:
+    loaders = {}
+    for loader_type in loader_types:
+        if loader_type == "frames":
+            dataset = FrameDataset(
+                stride=stride,
+                frame_list_path=frame_list,
+                clip_length_in_frames=clip_length_in_frames,
+            )
+            loader = DataLoader(
+                drop_last=True,
+                dataset=dataset,
+                pin_memory=True,
+                shuffle=shuffle,
+                batch_size=batch_size,
+                num_workers=num_workers,
+            )
+
+        elif loader_type == "videoclip":
+            with open(video_list, "r") as f:
+                rows = f.read().splitlines()
+                video_paths = [x.split()[0] for x in rows]
+
+            dataset = ClipDataset(
+                stride=stride,
+                video_paths=video_paths,
+                frame_rate=frame_rate,
+                clip_length_in_frames=clip_length_in_frames,
+                cache_dir=cache_dir,
+                refresh=refresh,
+            )
+            loader = DataLoader(
+                shuffle=shuffle,
+                drop_last=True,
+                dataset=dataset,
+                pin_memory=True,
+                batch_size=batch_size,
+                num_workers=num_workers,
+            )
+        elif loader_type == "dali":
+            # use the first visible gpu for loading
+            device_id = 0
+            loader = DaliVideoLoader(
+                device_id=device_id,
+                video_list=video_list,
+                shuffle=shuffle,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                clip_length_in_frames=clip_length_in_frames,
+                initial_prefetch_size=1,
+                seed=seed,
+            )
+        print(f"finished creating {loader_type} dataloader")
+        loaders[loader_type] = loader
+    return loaders
 
 
 def main():
     args = argparse.ArgumentParser()
     args.add_argument("--imsz", type=int, default=224)
+    args.add_argument("--seed", type=int, default=0)
     args.add_argument("--num_workers", type=int, default=8)
     args.add_argument("--batch_size", type=int, default=4)
     args.add_argument("--frame_rate", type=int, default=24)
     args.add_argument("--shuffle", type=int, default=1)
     args.add_argument("--max_clips", type=int, default=25)
-    args.add_argument("--loader_types", nargs='*', default="dali")
+    args.add_argument("--loader_types", nargs='+', default="dali")
     args.add_argument("--stride", type=int, default=1)
     args.add_argument("--refresh", action="store_true")
     args.add_argument("--show_gpu_utilization", action="store_true")
     args.add_argument("--sintel", action="store_true")
+    args.add_argument("--refresh_meta", action="store_true")
     args.add_argument("--include_model", action="store_true",
                       help="run a GPU-based model as part of the profiling ")
     args.add_argument("--vis", action="store_true")
     args.add_argument("--disp_fig", action="store_true")
     args.add_argument("--clip_length_in_frames", type=int, default=16)
-    args.add_argument("--cache_dir", default="data/video_clips_caches")
-    args.add_argument("--log_dir", default="data/logs")
-    args.add_argument("--video_list", default="data/sintel/video_list.txt")
-    args.add_argument("--frame_list", default="data/sintel/frame_list.txt")
+    args.add_argument("--cache_dir", type=Path, default="data/video_clips_caches")
+    args.add_argument("--log_dir", default="data/logs", type=Path)
+    args.add_argument("--video_list", type=Path, default="data/sintel/video_list.txt")
+    args.add_argument("--frame_list", type=Path, default="data/sintel/frame_list.txt")
     args = args.parse_args()
 
     timestamp = datetime.now().strftime(r"%Y-%m-%d_%H-%M-%S")
-    log_path = Path(args.log_dir) / f"{timestamp}.txt"
+    log_path = args.log_dir / f"{timestamp}.txt"
     log_path.parent.mkdir(exist_ok=True, parents=True)
     logging.basicConfig(filename=log_path, level=logging.INFO)
     console = logging.StreamHandler()
     console.setLevel(logging.INFO)
     logger = logging.getLogger("profiler")
     logger.addHandler(console)
+
+    # prevent ipython from duplicating logs
+    if len(logger.handlers) > 1:
+        logger.handlers = logger.handlers[:1]
+
     logger.info(f"Profiling {args.loader_types}")
     logger.info(f"Number of CPU workers - {args.num_workers}")
     logger.info(f"Frame rate - {args.frame_rate} fps")
-    get_GPU_info(args)
-    get_video_info(args)
-    for loader_type in args.loader_types:
-        if loader_type == "frames":
-            dataset = FrameDataset(
-                stride=args.stride,
-                frame_list_path=args.frame_list,
-                clip_length_in_frames=args.clip_length_in_frames,
-            )
-            loader = DataLoader(
-                drop_last=True,
-                dataset=dataset,
-                pin_memory=True,
-                shuffle=args.shuffle,
-                batch_size=args.batch_size,
-                num_workers=args.num_workers,
-            )
+    get_GPU_info(log_dir=args.log_dir, refresh_meta=args.refresh_meta)
+    get_video_info(
+        log_dir=args.log_dir,
+        video_list=args.video_list,
+        refresh_meta=args.refresh_meta,
+    )
 
-        elif loader_type == "videoclip":
-            with open(args.video_list, "r") as f:
-                rows = f.read().splitlines()
-                video_paths = [x.split()[0] for x in rows]
-
-            dataset = ClipDataset(
-                stride=args.stride,
-                video_paths=video_paths,
-                frame_rate=args.frame_rate,
-                clip_length_in_frames=args.clip_length_in_frames,
-                cache_dir=args.cache_dir,
-                refresh=args.refresh,
-            )
-            loader = DataLoader(
-                shuffle=args.shuffle,
-                drop_last=True,
-                dataset=dataset,
-                pin_memory=True,
-                batch_size=args.batch_size,
-                num_workers=args.num_workers,
-            )
-        elif loader_type == "dali":
-            pipe = DaliVideoPipeline(
-                device_id=0,
-                shuffle=args.shuffle,
-                file_list=args.video_list,
-                batch_size=args.batch_size,
-                initial_prefetch_size=1,
-                num_threads=args.num_workers,
-                clip_length_in_frames=args.clip_length_in_frames,
-            )
-            pipe.build()
-            loader = DALIGenericIterator(
-                pipelines=[pipe],
-                output_map=["data", "label", "frame_num"],
-                size=pipe.epoch_size("Reader"),
-            )
-            DALIGenericIterator.__len__ = lambda x: pipe.epoch_size("Reader")
-        print(f"finished creating {loader_type} dataloader")
-
+    loaders = build_loaders(
+        refresh=args.refresh,
+        seed=args.seed,
+        shuffle=bool(args.shuffle),
+        batch_size=args.batch_size,
+        stride=args.stride,
+        video_list=args.video_list,
+        frame_list=args.frame_list,
+        cache_dir=args.cache_dir,
+        num_workers=args.num_workers,
+        frame_rate=args.frame_rate,
+        loader_types=args.loader_types,
+        clip_length_in_frames=args.clip_length_in_frames,
+    )
+    for loader_type, loader in loaders.items():
         profiler = Profiler(
             vis=args.vis,
             loader=loader,
@@ -348,4 +395,5 @@ def main():
 
 
 if __name__ == "__main__":
+    matplotlib.use("Agg")
     main()
