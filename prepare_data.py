@@ -40,7 +40,7 @@ def re_encode_movie(orig_movie_path: Path, mp4_movie_path: Path, refresh: bool):
         return
     print(f"Re-encoding sintel movie in h264/mp4 and saving to {mp4_movie_path}")
     cmd = (f"ffmpeg -i {orig_movie_path} -map v:0 -c:v libx264 -crf 18 -pix_fmt yuv420p "
-           f"-g {keyframe_interval} fps=fps=25 -profile:v high -c:a "
+           f"-g {keyframe_interval} -vf fps=fps=25 -profile:v high -c:a "
            f"copy {mp4_movie_path}")
     subprocess.call(cmd.split())
 

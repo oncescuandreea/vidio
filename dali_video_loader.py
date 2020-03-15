@@ -76,7 +76,7 @@ class DaliVideoLoader:
         self.pipe.build()
         self.loader = DALIGenericIterator(
             pipelines=[self.pipe],
-            output_map=["data", "label", "start_time", "end_time"],
+            output_map=["data", "label", "frame_idx", "start_time"],
             size=self.pipe.epoch_size("Reader"),
         )
 

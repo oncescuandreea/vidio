@@ -239,7 +239,8 @@ def get_video_info(log_dir: Path, video_list: Path, refresh_meta: bool):
         for key in dims:
             dims[key].append(video_stream[key])
     for key, vals in dims.items():
-        assert len(set(vals)) == 1, f"Expected videos to have the same {key}"
+        msg = f"Expected videos to have the same {key}, but found {set(vals)}"
+        assert len(set(vals)) == 1, msg
     height, width = dims["height"][0], dims["width"][0]
 
     with open(dest_path, "w") as f:
@@ -322,7 +323,7 @@ def main():
     args.add_argument("--seed", type=int, default=0)
     args.add_argument("--num_workers", type=int, default=8)
     args.add_argument("--batch_size", type=int, default=4)
-    args.add_argument("--frame_rate", type=int, default=24)
+    args.add_argument("--frame_rate", type=int, default=25)
     args.add_argument("--shuffle", type=int, default=1)
     args.add_argument("--max_clips", type=int, default=25)
     args.add_argument("--loader_types", nargs='+', default="dali")
