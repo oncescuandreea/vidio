@@ -1,2 +1,4 @@
 .vscode
 data
+setup.sh
+*.pyc

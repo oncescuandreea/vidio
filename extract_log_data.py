@@ -1,13 +1,20 @@
-import argparse
-import glob
 import os
+import argparse
 import re
 import statistics
-from collections import defaultdict
 from pathlib import Path
+from collections import defaultdict
+from itertools import zip_longest
+
+from zsvision.zs_beartype import beartype
+
+from compare_loaders import get_gpu_info_path
 
 
-def log_parser(log_path):
+@beartype
+def log_parser(log_dir: Path):
+    list_of_files = list(log_dir.glob("*_*.txt"))
+    log_path = max(list_of_files, key=os.path.getctime)
     with open(log_path, "r") as f:
         log_file = f.read().splitlines()
     hz = defaultdict(list)
@@ -19,8 +26,6 @@ def log_parser(log_path):
         loader_types[counter] = loader_types[counter][1:-1]
     no_workers = log_file[1].split("Number of CPU workers - ")[1]
     frame_rate = log_file[2].split("Frame rate - ")[1].split("fps")[0]
-
-
     loaders_hz = dict.fromkeys(loader_types)
     patterns = ["batch hz: (avg)", "clip hz: (avg)"]
     for loader_type in loader_types:
@@ -33,73 +38,88 @@ def log_parser(log_path):
                         value = tokens[1].split(",")[0]
                         hz[pattern].append(float(value))
         loaders_hz[loader_type] = hz
-    return loader_types, loaders_hz, no_workers, frame_rate
+    return loaders_hz, no_workers, frame_rate
 
-def get_gpu(gpu_file_path):
-    with open(gpu_file_path, "r") as f:
+
+@beartype
+def get_gpu_type(log_dir: Path) -> str:
+    gpu_info_path = get_gpu_info_path(log_dir=log_dir)
+    with open(gpu_info_path, "r") as f:
         gpu_file = f.read().splitlines()
-    gpu_used = (' ').join(gpu_file[7].split()[2:4])
-    return gpu_used
+    return " ".join(gpu_file[7].split()[2:4])
 
-def get_dimensions(video_info_path):
+
+@beartype
+def get_dimensions(log_dir: Path) -> str:
+    video_info_path = list(log_dir.glob("video-meta-*.log"))[0]
     with open(video_info_path, "r") as f:
-        video_info = f.read()
-    regexp = r",\s(\d+)x(\d+)"
-    frame_dimension = re.search(regexp, video_info)[0][2:]
-    return frame_dimension
+        video_info = f.read().rstrip()
+    return video_info
 
-def update_readme(readme_path, gpu_used, loader_types, loaders_avg,
-no_workers, frame_rate, frame_dimension, readme_dest):
-    with open(readme_path, "r") as f:
+
+@beartype
+def update_readme(readme_template_path: Path, readme_dest_path: Path, log_dir: Path):
+    gpu_type = get_gpu_type(log_dir=log_dir)
+    video_dims = get_dimensions(log_dir=log_dir)
+    loaders_hz, cpu_workers, frame_rate = log_parser(log_dir=log_dir)
+    with open(readme_template_path, "r") as f:
         readme_file = f.read().splitlines()
-    patterns = [loader_type.capitalize() for loader_type in loader_types]
-    data = []
+
+    generated = []
     for row in readme_file:
-        new_row = None
-        for pattern in patterns:
-            tokens = row.split(f"{pattern}")
-            if len(tokens) == 2:
-                if "|" in tokens[1]:
-                    value = tokens[1].split("|")[1]
-                    new_row = row.replace(value, str(round(
-                        statistics.mean(loaders_avg[pattern.lower()]['clip hz: (avg)']),
-                        4)))
-        if len(row.split("GPU")) == 2:
-            new_row = f"* GPU - {gpu_used}"
-        if len(row.split("CPU")) == 2:
-            new_row = f"* Number of CPU workers - {no_workers}"
-        if len(row.split("Frame rate")) == 2:
-            new_row = f"* Frame rate - {frame_rate} fps"
-        if len(row.split("Dimensions")) == 2:
-            new_row = f"* Dimensions - {frame_dimension}"
-        if new_row is None:
-            data.append(row)
-        else:
-            data.append(new_row)
+        edits = []
+        regex = r"\{\{(.*?)\}\}"
+        for match in re.finditer(regex, row):
+            groups = match.groups()
+            assert len(groups) == 1, "expected single group"
+            target = groups[0]
+            if target == "frame_rate":
+                token = frame_rate
+            elif target == "video_dims":
+                token = video_dims
+            elif target == "gpu_type":
+                token = gpu_type
+            elif target == "cpu_workers":
+                token = cpu_workers
+            elif target in {"frames_hz", "videoclip_hz", "dali_hz"}:
+                warmup = 5
+                key = target.replace("_hz", "")
+                stat = statistics.mean(loaders_hz[key]['clip hz: (avg)'][warmup:])
+                token = f"{stat:.1f}"
+            edits.append((match.span(), token))
+        if edits:
+            # invert the spans
+            spans = [(None, 0)] + [x[0] for x in edits] + [(len(row), None)]
+            inverse_spans = [(x[1], y[0]) for x, y in zip(spans, spans[1:])]
+            tokens = [row[start:stop] for start, stop in inverse_spans]
+            vals = [str(x[1]) for x in edits]
+            new_row = ""
+            for token, val in zip_longest(tokens, vals, fillvalue=""):
+                new_row += token + val
+            row = new_row
 
+        generated.append(row)
 
-    with open(readme_dest, "w") as f:
-        f.write("\n".join(data))
+    print(f"Writing updated README to {readme_dest_path}")
+    with open(readme_dest_path, "w") as f:
+        for row in generated:
+            f.write(f"{row}\n")
 
 
 def main():
     args = argparse.ArgumentParser()
-    args.add_argument("--log_dir", default="data/logs")
+    args.add_argument("--log_dir", default="data/logs", type=Path)
+    args.add_argument("--readme_dest_path", default="README.md", type=Path)
+    args.add_argument("--readme_template_path", type=Path,
+                      default="misc/README_template.md")
     args = args.parse_args()
 
-    current_path = Path(args.log_dir)
-    results_path = current_path.parent.parent / "misc/README_template.md"
-    readme_dest = current_path.parent.parent / "README.md"
-    list_of_files = glob.glob(str(current_path / "*_*.txt"))
-    latest_file = max(list_of_files, key=os.path.getctime)
-    loader_types, loaders_hz, no_workers, frame_rate = log_parser(latest_file)
-    gpu_used = get_gpu(current_path / "info.txt")
-    video_info_path = glob.glob(str(current_path  / "ffprobe*.log"))[0]
-    frame_dimension = get_dimensions(video_info_path)
+    update_readme(
+        log_dir=args.log_dir,
+        readme_dest_path=args.readme_dest_path,
+        readme_template_path=args.readme_template_path,
+    )
 
-    #clips_hz_avg = statistics.mean(hz['clip hz: (avg)'])
-    update_readme(results_path, gpu_used, loader_types,
-     loaders_hz, no_workers, frame_rate, frame_dimension, readme_dest)
 
 if __name__ == "__main__":
     main()
