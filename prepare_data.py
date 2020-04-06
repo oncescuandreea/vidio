@@ -4,14 +4,15 @@
 import argparse
 import functools
 import subprocess
+from typing import Tuple
 from pathlib import Path
 
 import cv2
 import numpy as np
-from zsvision.zs_beartype import beartype
+from typeguard import typechecked
 
 
-@beartype
+@typechecked
 @functools.lru_cache(maxsize=64, typed=False)
 def get_video_duration(src_path: Path) -> float:
     assert src_path.exists(), f"Video at {src_path} not found"
@@ -21,7 +22,47 @@ def get_video_duration(src_path: Path) -> float:
     return video_res_t / video_fps
 
 
-@beartype
+@typechecked
+def re_encode_movie(
+        src_movie_path: Path,
+        dest_movie_path: Path,
+        refresh: bool,
+        keyframe_interval: int,
+        fps: int,
+        scale: Tuple[int, int] = None,
+):
+    """Re-encode a video to optimise it for usage with DALI.
+
+    Args:
+        src_movie_path: the original movie to be re-encoded
+        keyframe_interval: the number of frames between keyframes
+        refresh: whether to overwrite an existing video at the destination
+        scale: if given, rescale the frames to have these spatial dimensions.
+        fps: the output framerate of the re-encoded movie.
+        dest_movie_path: the destination path where the re-encoded video will be stored
+
+    NOTE: The basic idea behind this reencoding is to ensure that there are sufficiently
+    many keyframes to allow fast random access into the video.  Following the
+    recommendation from NVVL, it is considered wise to set the keyframe interval
+    to reflect the expected clip size. We also encode as h.264 and use yuv420p format.
+    """
+    if dest_movie_path.exists() and not refresh:
+        print(f"Found re-encoded dest sintel movie at {dest_movie_path}, skipping...")
+        return
+    msg = f"Expected mp4 suffix for destination, found {dest_movie_path.suffix}"
+    assert dest_movie_path.suffix == ".mp4", msg
+    print(f"Re-encoding movie in h264 and saving to {dest_movie_path}")
+    flags = (f" -map v:0 -c:v libx264 -crf 18 -pix_fmt yuv420p -g {keyframe_interval} "
+             f"-vf fps=fps={fps} -profile:v high -c:a copy ")
+    cmd = f"ffmpeg -i {src_movie_path} {flags}"
+    if scale:
+        cmd = f"{cmd} -vf scale={scale[0]}:{scale[1]}"
+    cmd = f"{cmd} {dest_movie_path}"
+    dest_movie_path.parent.mkdir(exist_ok=True, parents=True)
+    subprocess.call(cmd.split())
+
+
+@typechecked
 def fetch_movie(url: str, orig_movie_path: Path, refresh: bool):
     if orig_movie_path.exists() and not refresh:
         print(f"Found existing sintel movie at {url}")
@@ -30,22 +71,7 @@ def fetch_movie(url: str, orig_movie_path: Path, refresh: bool):
     subprocess.call(["wget", url, "-O", str(orig_movie_path)])
 
 
-@beartype
-def re_encode_movie(orig_movie_path: Path, mp4_movie_path: Path, refresh: bool):
-    # Following the recommendation from NVVL, we set the keyframe interval to reflect
-    # the expected clip size
-    keyframe_interval = 16
-    if mp4_movie_path.exists() and not refresh:
-        print(f"Found re-encoded mp4 sintel movie at {mp4_movie_path}, skipping...")
-        return
-    print(f"Re-encoding sintel movie in h264/mp4 and saving to {mp4_movie_path}")
-    cmd = (f"ffmpeg -i {orig_movie_path} -map v:0 -c:v libx264 -crf 18 -pix_fmt yuv420p "
-           f"-g {keyframe_interval} -vf fps=fps=25 -profile:v high -c:a "
-           f"copy {mp4_movie_path}")
-    subprocess.call(cmd.split())
-
-
-@beartype
+@typechecked
 def split_movie_to_chunks(
         movie_path: Path,
         movie_chunk_dir: Path,
@@ -62,7 +88,7 @@ def split_movie_to_chunks(
     subprocess.call(cmd.split())
 
 
-@beartype
+@typechecked
 def split_chunks_to_frames(movie_chunk_dir: Path, frame_dir: Path, refresh: bool):
     chunks = list(movie_chunk_dir.glob("*.mp4"))
     print(f"Found {len(chunks)} movie chunks")
@@ -76,7 +102,7 @@ def split_chunks_to_frames(movie_chunk_dir: Path, frame_dir: Path, refresh: bool
         subprocess.call(cmd.split())
 
 
-@beartype
+@typechecked
 def prepare_file_list(
         movie_chunk_dir: Path,
         frame_dir: Path,
@@ -113,6 +139,7 @@ def prepare_file_list(
 def main():
     args = argparse.ArgumentParser()
     args.add_argument("--refresh", action="store_true")
+    args.add_argument("--keyframe_interval", type=int, default=16)
     args.add_argument("--task", default="prepare-videos",
                       choices=["prepare-videos", "prepare-metadata"])
     args.add_argument("--data_dir", default="data/sintel", type=Path)
@@ -137,8 +164,9 @@ def main():
         refresh=args.refresh,
     )
     re_encode_movie(
-        orig_movie_path=orig_movie_path,
         mp4_movie_path=mp4_movie_path,
+        orig_movie_path=orig_movie_path,
+        keyframe_interval=args.keyframe_interval,
         refresh=args.refresh,
     )
     split_movie_to_chunks(
