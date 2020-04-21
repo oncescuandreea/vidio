@@ -5,34 +5,34 @@
 * VideoClips
     (https://github.com/pytorch/vision/blob/master/torchvision/datasets/video_utils.py)
 
-ipy compare_loaders.py -- --loader_type dali --disp_fig
+ipy compare_loaders.py -- --loader_type dali
 """
 
-import argparse
-import hashlib
-import logging
 import os
+import time
 import pickle
 import socket
+import hashlib
+import logging
+import argparse
 import subprocess
-import time
-from datetime import datetime
+from typing import Dict, List, Iterable
 from pathlib import Path
-from typing import List, Dict
-import ffmpeg
-from typing import Iterable
-from zsvision.zs_beartype import beartype
+from datetime import datetime
 
-from dali_video_loader import DaliVideoLoader
-import matplotlib
-import matplotlib.gridspec as gridspec
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
+import ffmpeg
+import matplotlib
+import matplotlib.gridspec as gridspec
 from PIL import Image
+from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader
-from torchvision.datasets.video_utils import VideoClips
+from typeguard import typechecked
 from torchvision.models.video import r2plus1d_18
+from torchvision.datasets.video_utils import VideoClips
+
+from dali_video_loader import DaliVideoLoader
 
 
 class FrameDataset:
@@ -107,7 +107,7 @@ class ClipDataset:
 
 
 class Profiler:
-    @beartype
+    @typechecked
     def __init__(
             self,
             vis: bool,
@@ -135,7 +135,7 @@ class Profiler:
         self.logger = logger
         self.logger.info(f"{loader_type} profiler, include_model: {self.include_model}")
 
-    @beartype
+    @typechecked
     def vis_sequence(self, sequence: torch.Tensor):
         columns = 4
         rows = (sequence.shape[0] + 1) // (columns)
@@ -204,13 +204,13 @@ class Profiler:
                     self.model(clips)
 
 
-@beartype
+@typechecked
 def get_gpu_info_path(log_dir: Path):
     hostname = socket.gethostname()
     return log_dir / f"gpu-info-for-{hostname}.txt"
 
 
-@beartype
+@typechecked
 def get_GPU_info(log_dir: Path, refresh_meta: bool):
     dest_path = get_gpu_info_path(log_dir=log_dir)
     if dest_path.exists() and not refresh_meta:
@@ -219,7 +219,7 @@ def get_GPU_info(log_dir: Path, refresh_meta: bool):
     subprocess.call(cmd.split())
 
 
-@beartype
+@typechecked
 def get_video_info(log_dir: Path, video_list: Path, refresh_meta: bool):
     with open(video_list, "r") as f:
         rows = f.read().splitlines()

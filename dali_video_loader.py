@@ -11,11 +11,11 @@ import nvidia.dali.ops as ops
 import nvidia.dali.types as types
 from nvidia.dali.pipeline import Pipeline
 from nvidia.dali.plugin.pytorch import DALIGenericIterator
-from zsvision.zs_beartype import beartype
+from typeguard import typechecked
 
 
 class DaliVideoPipeline(Pipeline):
-    @beartype
+    @typechecked
     def __init__(
             self,
             batch_size: int,
@@ -51,7 +51,7 @@ class DaliVideoPipeline(Pipeline):
 
 
 class DaliVideoLoader:
-    @beartype
+    @typechecked
     def __init__(
             self,
             video_list: Path,

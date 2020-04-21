@@ -2,6 +2,7 @@
 (used to test out various video data loaders).
 """
 import argparse
+import shutil
 import functools
 import subprocess
 from typing import Tuple
@@ -47,19 +48,24 @@ def re_encode_movie(
     to reflect the expected clip size. We also encode as h.264 and use yuv420p format.
     """
     if dest_movie_path.exists() and not refresh:
-        print(f"Found re-encoded dest sintel movie at {dest_movie_path}, skipping...")
+        print(f"Found re-encoded movie at {dest_movie_path}, skipping...")
         return
     msg = f"Expected mp4 suffix for destination, found {dest_movie_path.suffix}"
     assert dest_movie_path.suffix == ".mp4", msg
-    print(f"Re-encoding movie in h264 and saving to {dest_movie_path}")
+    # Ensure that the operation atomic
+    tmp_path = dest_movie_path.parent / f"{dest_movie_path.stem}.tmp.mp4"
+    print(f"Re-encoding movie in h264 and saving to {tmp_path}")
     flags = (f" -map v:0 -c:v libx264 -crf 18 -pix_fmt yuv420p -g {keyframe_interval} "
              f"-vf fps=fps={fps} -profile:v high -c:a copy ")
     cmd = f"ffmpeg -i {src_movie_path} {flags}"
     if scale:
         cmd = f"{cmd} -vf scale={scale[0]}:{scale[1]}"
-    cmd = f"{cmd} {dest_movie_path}"
+    cmd = f"{cmd} {tmp_path}"
     dest_movie_path.parent.mkdir(exist_ok=True, parents=True)
     subprocess.call(cmd.split())
+    # rotate temp file back only after completion to preserve atomicity
+    shutil.move(tmp_path, dest_movie_path)
+
 
 
 @typechecked

@@ -1,17 +1,17 @@
 import os
-import argparse
 import re
+import argparse
 import statistics
 from pathlib import Path
-from collections import defaultdict
 from itertools import zip_longest
+from collections import defaultdict
 
-from zsvision.zs_beartype import beartype
+from typeguard import typechecked
 
 from compare_loaders import get_gpu_info_path
 
 
-@beartype
+@typechecked
 def log_parser(log_dir: Path):
     list_of_files = list(log_dir.glob("*_*.txt"))
     log_path = max(list_of_files, key=os.path.getctime)
@@ -41,7 +41,7 @@ def log_parser(log_dir: Path):
     return loaders_hz, no_workers, frame_rate
 
 
-@beartype
+@typechecked
 def get_gpu_type(log_dir: Path) -> str:
     gpu_info_path = get_gpu_info_path(log_dir=log_dir)
     with open(gpu_info_path, "r") as f:
@@ -49,7 +49,7 @@ def get_gpu_type(log_dir: Path) -> str:
     return " ".join(gpu_file[7].split()[2:4])
 
 
-@beartype
+@typechecked
 def get_dimensions(log_dir: Path) -> str:
     video_info_path = list(log_dir.glob("video-meta-*.log"))[0]
     with open(video_info_path, "r") as f:
@@ -57,7 +57,7 @@ def get_dimensions(log_dir: Path) -> str:
     return video_info
 
 
-@beartype
+@typechecked
 def update_readme(readme_template_path: Path, readme_dest_path: Path, log_dir: Path):
     gpu_type = get_gpu_type(log_dir=log_dir)
     video_dims = get_dimensions(log_dir=log_dir)
